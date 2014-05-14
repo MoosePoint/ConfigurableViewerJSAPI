@@ -2,11 +2,8 @@ define([
     'esri/map',
     'esri/dijit/Geocoder',
     'esri/layers/FeatureLayer',
-    'esri/layers/ArcGISImageServiceLayer',
-    'esri/layers/GeoRSSLayer',
-    'esri/layers/KMLLayer',
-    'esri/layers/WMSLayer',
-    'esri/layers/WMTSLayer',
+    'esri/layers/ArcGISDynamicMapServiceLayer',
+    'esri/layers/ArcGISTiledMapServiceLayer',
     'esri/layers/osm',
     'dojo/dom',
     'dojo/dom-construct',
@@ -28,8 +25,10 @@ define([
     'esri/IdentityManager',
     'esri/tasks/GeometryService',
     'gis/dijit/Identify',
-    'dojo/aspect'
-], function(Map, Geocoder, FeatureLayer, ImageLayer, GeoRSSLayer, KMLLayer, WMSLayer, WMTSLayer, osmLayer, dom, domConstruct, Style, domClass, on, parser, array, BorderContainer, ContentPane, TitlePane, win, lang, Growler, Help, Basemaps, mapOverlay, config, IdentityManager, GeometryService, Identify, aspect) {
+    'dojo/aspect',
+    'esri/config',
+    'esri/geometry/Extent'
+], function(Map, Geocoder, FeatureLayer, ArcGISDynamicMapServiceLayer, ArcGISTiledMapServiceLayer, osm, dom, domConstruct, Style, domClass, on, parser, array, BorderContainer, ContentPane, TitlePane, win, lang, Growler, Help, Basemaps, mapOverlay, config, IdentityManager, GeometryService, Identify, aspect, esriConfig, Extent) {
 
     var controller = {
         config: config,
@@ -38,17 +37,16 @@ define([
         tocLayerInfos: [],
         mapClickMode: {
             current: config.defaultMapClickMode,
-            default: config.defaultMapClickMode
+            defaultMode: config.defaultMapClickMode
         },
         startup: function() {
             this.initConfig();
             this.initView();
-            app = this; //dev only
         },
         initConfig: function() {
-            esri.config.defaults.io.proxyUrl = config.proxy.url;
-            esri.config.defaults.io.alwaysUseProxy = config.proxy.alwaysUseProxy;
-            esri.config.defaults.geometryService = new GeometryService(config.geometryService.url);
+            esriConfig.defaults.io.proxyUrl = config.proxy.url;
+            esriConfig.defaults.io.alwaysUseProxy = config.proxy.alwaysUseProxy;
+            esriConfig.defaults.geometryService = new GeometryService(config.geometryService.url);
         },
         initView: function() {
             this.outer = new BorderContainer({
@@ -78,20 +76,8 @@ define([
             this.domStore = dom.byId('sidebarStorage');
         },
         initMap: function() {
-            var center, extent;
-            if (config.center) {
-                center = new esri.geometry.Point(config.center);
-            } else if (config.initialExtent) {
-                extent = new esri.geometry.Extent(config.initialExtent);
-            }
-            this.map = new esri.Map("map", {
-                center: center,
-                extent: extent,
-                minZoom: config.minZoom,
-                maxZoom: config.maxZoom,
-                nav: config.nav || false,
-                sliderStyle: config.sliderStyle || "small",
-                zoom: config.zoom
+            this.map = new Map('map', {
+                extent: new Extent(config.initialExtent)
             });
 
             this.map.on('load', lang.hitch(this, 'initLayers'));
@@ -100,50 +86,29 @@ define([
             this.basemaps = new Basemaps({
                 map: this.map,
                 mode: config.basemapMode,
-                title: "Basemaps",
+                title: 'Basemaps',
                 mapStartBasemap: config.mapStartBasemap,
                 basemapsToShow: config.basemapsToShow
-            }, "basemapsDijit");
+            }, 'basemapsDijit');
             this.basemaps.startup();
         },
         initLayers: function(evt) {
             this.layers = [];
             array.forEach(config.operationalLayers, function(layer) {
-                var l, options;
+                var l;
                 if (layer.type == 'dynamic') {
-                    // control which layers are visible by default (and other image parameters)
-                    options = layer.options;
-                    if (options.imageParameters) {
-                        var im = new esri.layers.ImageParameters();
-                        for (var key in options.imageParameters) {
-                            im[key] = options.imageParameters[key];
-                        }
-                        options.imageParameters = im;
-                    }
-                    l = new esri.layers.ArcGISDynamicMapServiceLayer(layer.url, options);
+                    l = new ArcGISDynamicMapServiceLayer(layer.url, layer.options);
                 } else if (layer.type == 'tiled') {
-                    l = new esri.layers.ArcGISTiledMapServiceLayer(layer.url, layer.options);
+                    l = new ArcGISTiledMapServiceLayer(layer.url, layer.options);
                 } else if (layer.type == 'feature') {
-                    l = new esri.layers.FeatureLayer(layer.url, layer.options);
-                    options = {
+                    l = new FeatureLayer(layer.url, layer.options);
+                    var options = {
                         featureLayer: l
                     };
                     if (layer.editorLayerInfos) {
                         lang.mixin(options, layer.editorLayerInfos);
                     }
                     this.editorLayerInfos.push(options);
-                } else if (layer.type == 'image') {
-                    l = new esri.layers.ArcGISImageServiceLayer(layer.url, layer.options);
-                } else if (layer.type == 'georss') {
-                    l = new esri.layers.GeoRSSLayer(layer.url, layer.options);
-                } else if (layer.type == 'kml') {
-                    l = new esri.layers.KMLLayer(layer.url, layer.options);
-                } else if (layer.type == 'webtiled') {
-                    l = new esri.layers.WebTiledLayer(layer.url, layer.options);
-                } else if (layer.type == 'wms') {
-                    l = new esri.layers.WMSLayer(layer.url, layer.options);
-                } else if (layer.type == 'wmts') {
-                    l = new esri.layers.WMTSLayer(layer.url, layer.options);
                 } else {
                     console.log('Layer type not supported: ', layer.type);
                 }
@@ -162,13 +127,13 @@ define([
             }, this);
             this.map.addLayers(this.layers);
 
-            this.growler = new Growler({}, "growlerDijit");
+            this.growler = new Growler({}, 'growlerDijit');
             this.growler.startup();
 
-            this.geocoder = new esri.dijit.Geocoder({
+            this.geocoder = new Geocoder({
                 map: this.map,
                 autoComplete: true
-            }, "geocodeDijit");
+            }, 'geocodeDijit');
             this.geocoder.startup();
 
         },
@@ -176,20 +141,21 @@ define([
             this.identify = new Identify({
                 identifyTolerance: config.identifyTolerance,
                 map: this.map,
-                mapClickMode: this.mapClickMode,
-                controller: this
+                mapClickMode: this.mapClickMode
             });
 
             var widgets = [];
             array.forEach(['mapWidgets', 'sidebarWidgets'], function(widgetSet) {
                 for (var key in config[widgetSet]) {
-                    var widget = lang.clone(config[widgetSet][key]);
-                    if (widget.include) {
-                        widget.position = ('undefined' !== typeof(widget.position)) ? widget.position : 10000;
-                        widgets.push({
-                            key: key,
-                            config: widget
-                        });
+                    if (config[widgetSet].hasOwnProperty(key)) {
+                        var widget = lang.clone(config[widgetSet][key]);
+                        if (widget.include) {
+                            widget.position = ('undefined' !== typeof(widget.position)) ? widget.position : 10000;
+                            widgets.push({
+                                key: key,
+                                config: widget
+                            });
+                        }
                     }
                 }
             });
@@ -253,7 +219,7 @@ define([
                 this.legend = new Legend({
                     map: this.map,
                     layerInfos: this.legendLayerInfos
-                }, domConstruct.create("div")).placeAt(legendTP.containerNode);
+                }, domConstruct.create('div')).placeAt(legendTP.containerNode);
             }));
         },
         TOC: function(widgetConfig, position) {
@@ -262,7 +228,7 @@ define([
                 this.toc = new TOC({
                     map: this.map,
                     layerInfos: this.tocLayerInfos
-                }, domConstruct.create("div")).placeAt(TOCTP.containerNode);
+                }, domConstruct.create('div')).placeAt(TOCTP.containerNode);
                 this.toc.startup();
             }));
         },
@@ -272,7 +238,7 @@ define([
                 this.bookmarks = new Bookmarks({
                     map: this.map,
                     editable: true
-                }, domConstruct.create("div")).placeAt(bookmarksTP.containerNode);
+                }, domConstruct.create('div')).placeAt(bookmarksTP.containerNode);
                 this.bookmarks.startup();
             }));
         },
@@ -282,7 +248,7 @@ define([
                 this.drawWidget = new Draw({
                     map: this.map,
                     mapClickMode: this.mapClickMode
-                }, domConstruct.create("div")).placeAt(drawTP.containerNode);
+                }, domConstruct.create('div')).placeAt(drawTP.containerNode);
                 this.drawWidget.startup();
             }));
         },
@@ -294,7 +260,7 @@ define([
                     mapClickMode: this.mapClickMode,
                     defaultAreaUnit: widgetConfig.defaultAreaUnit,
                     defaultLengthUnit: widgetConfig.defaultLengthUnit
-                }, domConstruct.create("div")).placeAt(measureTP.containerNode);
+                }, domConstruct.create('div')).placeAt(measureTP.containerNode);
                 this.measure.startup();
                 aspect.before(this.measure, 'measureArea', lang.hitch(this, 'setMapClickMode', 'measure'));
                 aspect.before(this.measure, 'measureDistance', lang.hitch(this, 'setMapClickMode', 'measure'));
@@ -313,7 +279,7 @@ define([
                     defaultTitle: widgetConfig.defaultTitle,
                     defaultFormat: widgetConfig.defaultFormat,
                     defaultLayout: widgetConfig.defaultLayout
-                }, domConstruct.create("div")).placeAt(printTP.containerNode);
+                }, domConstruct.create('div')).placeAt(printTP.containerNode);
                 this.printWidget.startup();
             }));
         },
@@ -324,7 +290,7 @@ define([
                     map: this.map,
                     options: widgetConfig.options,
                     titlePane: directionsTP
-                }, domConstruct.create("div")).placeAt(directionsTP.containerNode);
+                }, domConstruct.create('div')).placeAt(directionsTP.containerNode);
                 this.directionsWidget.startup();
             }));
         },
@@ -337,7 +303,7 @@ define([
                     layerInfos: this.editorLayerInfos,
                     settings: widgetConfig.settings,
                     titlePane: editorTP
-                }, domConstruct.create("div")).placeAt(editorTP.containerNode);
+                }, domConstruct.create('div')).placeAt(editorTP.containerNode);
                 this.editor.startup();
             }));
         },
@@ -362,7 +328,7 @@ define([
                 var options = widgetConfig.options;
                 options.map = this.map;
                 if (options.extent) {
-                    options.extent = new esri.geometry.Extent(options.extent);
+                    options.extent = new Extent(options.extent);
                 }
                 this.homeButton = new HomeButton(options, 'homeButton');
                 this.homeButton.startup();
